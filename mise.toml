@@ -1,0 +1,5 @@
+[tasks.build]
+run = "go build -o jev ."
+
+[tasks.install]
+run = "go build -o jev . && cp jev ~/bin/jev"
