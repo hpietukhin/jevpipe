@@ -1,32 +1,25 @@
 package typesafe
 
 import (
-	"encoding/json"
-
 	jsonv2 "encoding/json/v2"
 )
 
-// Request is a typed System One call: one state value and one or more questions.
-type Request[State any] struct {
+// Request is a System One call: one state value and one or more questions.
+type Request struct {
 	Model     string
-	State     State
+	State     any
 	Questions map[string]Question
 }
 
 // MarshalJSON implements the SystemOneRequest schema.
-func (r Request[State]) MarshalJSON() ([]byte, error) {
-	questions, err := MarshalQuestions(r.Questions)
-	if err != nil {
-		return nil, err
+func (r Request) MarshalJSON() ([]byte, error) {
+	questions := make(map[string]any, len(r.Questions))
+	for name, q := range r.Questions {
+		questions[name] = q.wire()
 	}
-	wire := struct {
-		Model     string                     `json:"model"`
-		State     State                      `json:"state"`
-		Questions map[string]json.RawMessage `json:"questions"`
-	}{
-		Model:     r.Model,
-		State:     r.State,
-		Questions: questions,
-	}
-	return jsonv2.Marshal(wire)
+	return jsonv2.Marshal(struct {
+		Model     string         `json:"model"`
+		State     any            `json:"state"`
+		Questions map[string]any `json:"questions"`
+	}{r.Model, r.State, questions})
 }

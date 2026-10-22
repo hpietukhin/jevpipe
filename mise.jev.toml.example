@@ -1,5 +1,5 @@
 [env]
 JEV_KEY=""
 # Optional: defaults to https://api.typesafe.ai
-# TYPESAFE_BASE_URL=""
+# JEV_BASE_URL=""
 # JEV_MODEL="jev-latest"

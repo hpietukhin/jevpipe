@@ -32,7 +32,7 @@ func TestQuestionWire_roundTripsType(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			raw, err := tc.question.marshalWire()
+			raw, err := jsonv2.Marshal(tc.question.wire())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -51,7 +51,7 @@ func TestQuestionWire_roundTripsType(t *testing.T) {
 
 func TestRequestMarshalJSON_includesQuestionType(t *testing.T) {
 	t.Parallel()
-	req := Request[map[string]int]{
+	req := Request{
 		Model: "jev-latest",
 		State: map[string]int{"project_id": 42},
 		Questions: map[string]Question{
@@ -70,16 +70,16 @@ func TestRequestMarshalJSON_includesQuestionType(t *testing.T) {
 	}
 }
 
-func TestDecodeAnswers_parsesNoulAndChoice(t *testing.T) {
+func TestDecodeResponse_parsesNoulAndChoice(t *testing.T) {
 	t.Parallel()
-	wire := map[string]json.RawMessage{
-		"billing": json.RawMessage(`{"type":"noul","noul":0.9}`),
-		"tone":    json.RawMessage(`{"type":"choice","choice":"calm","confidence":0.8,"probabilities":{"calm":0.8}}`),
-	}
-	answers, err := DecodeAnswers(wire)
+	resp, err := decodeResponse([]byte(`{"model":"m","answers":{
+		"billing": {"type":"noul","noul":0.9},
+		"tone": {"type":"choice","choice":"calm","confidence":0.8,"probabilities":{"calm":0.8}}
+	}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
+	answers := resp.Answers
 	noul, ok := answers["billing"].(NoulAnswer)
 	if !ok || noul.Noul != 0.9 {
 		t.Fatalf("noul: %#v", answers["billing"])
@@ -87,19 +87,5 @@ func TestDecodeAnswers_parsesNoulAndChoice(t *testing.T) {
 	choice, ok := answers["tone"].(ChoiceAnswer)
 	if !ok || choice.Choice != "calm" {
 		t.Fatalf("choice: %#v", answers["tone"])
-	}
-}
-
-func TestBuildCLIOutput_mapsPrimaryNoul(t *testing.T) {
-	t.Parallel()
-	parsed := ParsedResponse{
-		Model: "jev-latest",
-		Answers: map[string]Answer{
-			"answer": NoulAnswer{Type: TypeNoul, Noul: 0.5},
-		},
-	}
-	out, ok := BuildCLIOutput(parsed, "answer")
-	if !ok || out.Noul != 0.5 || out.Type != TypeNoul {
-		t.Fatalf("out: %#v ok=%v", out, ok)
 	}
 }

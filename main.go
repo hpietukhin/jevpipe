@@ -5,6 +5,7 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 
 	"github.com/hpietukhin/jevpipe/routing"
@@ -19,120 +21,77 @@ import (
 )
 
 const (
-	defaultBaseURL = "https://api.typesafe.ai"
-	defaultModel   = "jev-latest"
+	defaultModel = "jev-latest"
+	answerName   = "answer"
+	usage        = "usage: jev <question>\n       cat data.json | jev \"what is the project id?\""
 )
 
+var errUsage = errors.New("usage")
+
 func main() {
-	os.Exit(run())
-}
-
-func run() int {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: jev <question>")
-		fmt.Fprintln(os.Stderr, "       cat data.json | jev \"what is the project id?\"")
-		return 2
-	}
-	prompt := strings.Join(os.Args[1:], " ")
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	stdin, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		fail("read stdin: %v", err)
-		return 1
+	err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Getenv)
+	stop()
+	switch {
+	case err == nil:
+	case errors.Is(err, errUsage):
+		fmt.Fprintln(os.Stderr, usage)
+		os.Exit(2)
+	default:
+		fmt.Fprintf(os.Stderr, "jev: %v\n", err)
+		os.Exit(1)
 	}
-	state := routing.StdinState(stdin)
-
-	cfg, err := loadConfig()
-	if err != nil {
-		fail("%v", err)
-		return 1
-	}
-
-	req := typesafe.Request[any]{
-		Model: cfg.Model,
-		State: state,
-		Questions: map[string]typesafe.Question{
-			"answer": routing.Question(state, prompt),
-		},
-	}
-
-	client := &typesafe.Client{
-		BaseURL: cfg.BaseURL,
-		APIKey:  cfg.APIKey,
-	}
-	wire, err := client.SystemOne(ctx, req)
-	if err != nil {
-		fail("%v", err)
-		return 1
-	}
-
-	parsed, err := wire.Parse()
-	if err != nil {
-		fail("parse response: %v", err)
-		return 1
-	}
-
-	out, ok := typesafe.BuildCLIOutput(parsed, "answer")
-	if ok {
-		if err := writeJSON(os.Stdout, out); err != nil {
-			fail("encode stdout: %v", err)
-			return 1
-		}
-		return 0
-	}
-	fallback := struct {
-		Model   string                     `json:"model"`
-		Usage   map[string]any               `json:"usage,omitempty"`
-		Answers map[string]typesafe.Answer `json:"answers"`
-	}{
-		Model:   parsed.Model,
-		Usage:   parsed.Usage,
-		Answers: parsed.Answers,
-	}
-	if err := writeJSON(os.Stdout, fallback); err != nil {
-		fail("encode stdout: %v", err)
-		return 1
-	}
-	return 0
 }
 
-func writeJSON(w io.Writer, v any) error {
-	if err := jsonv2.MarshalWrite(w, v); err != nil {
+func run(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, getenv func(string) string) error {
+	if len(args) == 0 {
+		return errUsage
+	}
+	prompt := strings.Join(args, " ")
+
+	data, err := io.ReadAll(stdin)
+	if err != nil {
+		return fmt.Errorf("read stdin: %w", err)
+	}
+	state := routing.StdinState(data)
+
+	apiKey := strings.TrimSpace(getenv("JEV_KEY"))
+	if apiKey == "" {
+		return errors.New("JEV_KEY must be set")
+	}
+	client := &typesafe.Client{BaseURL: strings.TrimSpace(getenv("JEV_BASE_URL")), APIKey: apiKey}
+	resp, err := client.SystemOne(ctx, typesafe.Request{
+		Model:     cmp.Or(strings.TrimSpace(getenv("JEV_MODEL")), defaultModel),
+		State:     state,
+		Questions: map[string]typesafe.Question{answerName: routing.Question(state, prompt)},
+	})
+	if err != nil {
 		return err
 	}
-	_, err := w.Write([]byte{'\n'})
-	return err
-}
 
-type config struct {
-	APIKey  string
-	BaseURL string
-	Model   string
-}
-
-func loadConfig() (config, error) {
-	apiKey := cmp.Or(
-		strings.TrimSpace(os.Getenv("JEV_KEY")),
-		strings.TrimSpace(os.Getenv("TYPESAFE_API_KEY")),
-	)
-	if apiKey == "" {
-		return config{}, fmt.Errorf("JEV_KEY or TYPESAFE_API_KEY must be set")
+	out, err := output(resp, answerName)
+	if err != nil {
+		return err
 	}
-	model := cmp.Or(
-		strings.TrimSpace(os.Getenv("JEV_MODEL")),
-		strings.TrimSpace(os.Getenv("TYPESAFE_DEFAULT_MODEL")),
-		defaultModel,
-	)
-	baseURL := strings.TrimSuffix(
-		cmp.Or(strings.TrimSpace(os.Getenv("TYPESAFE_BASE_URL")), defaultBaseURL),
-		"/",
-	)
-	return config{APIKey: apiKey, BaseURL: baseURL, Model: model}, nil
+	if _, err := stdout.Write(append(out, '\n')); err != nil {
+		return fmt.Errorf("write stdout: %w", err)
+	}
+	return nil
 }
 
-func fail(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "jev: "+format+"\n", args...)
+// output flattens model, usage, and every field of the named answer into one JSON object.
+func output(resp typesafe.Response, name string) ([]byte, error) {
+	answer, ok := resp.Answers[name]
+	if !ok {
+		return nil, fmt.Errorf("response has no %q answer", name)
+	}
+	fields, err := jsonv2.Marshal(answer)
+	if err != nil {
+		return nil, fmt.Errorf("encode answer: %w", err)
+	}
+	return jsonv2.Marshal(struct {
+		Model  string         `json:"model"`
+		Usage  map[string]any `json:"usage,omitempty"`
+		Answer jsontext.Value `json:",embed"`
+	}{resp.Model, resp.Usage, fields})
 }

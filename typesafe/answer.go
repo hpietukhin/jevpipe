@@ -1,9 +1,9 @@
 package typesafe
 
 import (
-	"encoding/json"
 	"fmt"
 
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 )
 
@@ -41,92 +41,28 @@ type ScoreAnswer struct {
 
 func (a ScoreAnswer) AnswerType() QuestionType { return TypeScore }
 
-// DecodeAnswer unmarshals one answer blob into a concrete Answer type.
-func DecodeAnswer[T Answer](raw json.RawMessage) (T, error) {
+var answerDecoders = map[QuestionType]func(jsontext.Value) (Answer, error){
+	TypeNoul:   decodeAs[NoulAnswer],
+	TypeChoice: decodeAs[ChoiceAnswer],
+	TypeScore:  decodeAs[ScoreAnswer],
+}
+
+func decodeAs[T Answer](raw jsontext.Value) (Answer, error) {
 	var answer T
-	if err := jsonv2.Unmarshal(raw, &answer); err != nil {
-		return answer, err
-	}
-	return answer, nil
+	err := jsonv2.Unmarshal(raw, &answer)
+	return answer, err
 }
 
-// DecodeAnswers parses every answer in a System One response by declared type.
-func DecodeAnswers(wire map[string]json.RawMessage) (map[string]Answer, error) {
-	out := make(map[string]Answer, len(wire))
-	for name, raw := range wire {
-		typ, err := peekAnswerType(raw)
-		if err != nil {
-			return nil, fmt.Errorf("answer %q: %w", name, err)
-		}
-		switch typ {
-		case TypeNoul:
-			a, err := DecodeAnswer[NoulAnswer](raw)
-			if err != nil {
-				return nil, fmt.Errorf("answer %q: %w", name, err)
-			}
-			out[name] = a
-		case TypeChoice:
-			a, err := DecodeAnswer[ChoiceAnswer](raw)
-			if err != nil {
-				return nil, fmt.Errorf("answer %q: %w", name, err)
-			}
-			out[name] = a
-		case TypeScore:
-			a, err := DecodeAnswer[ScoreAnswer](raw)
-			if err != nil {
-				return nil, fmt.Errorf("answer %q: %w", name, err)
-			}
-			out[name] = a
-		default:
-			return nil, fmt.Errorf("answer %q: unknown type %q", name, typ)
-		}
-	}
-	return out, nil
-}
-
-func peekAnswerType(raw json.RawMessage) (QuestionType, error) {
+func decodeAnswer(raw jsontext.Value) (Answer, error) {
 	var head struct {
 		Type QuestionType `json:"type"`
 	}
 	if err := jsonv2.Unmarshal(raw, &head); err != nil {
-		return "", err
+		return nil, err
 	}
-	return head.Type, nil
-}
-
-// CLIOutput is the compact JSON object written by the jev CLI.
-type CLIOutput struct {
-	Model         string             `json:"model"`
-	Usage         map[string]any     `json:"usage,omitempty"`
-	Type          QuestionType       `json:"type,omitempty,omitzero"`
-	Noul          float64            `json:"noul,omitzero"`
-	Choice        string             `json:"choice,omitempty"`
-	Score         float64            `json:"score,omitzero"`
-	Confidence    float64            `json:"confidence,omitzero"`
-	Probabilities map[string]float64 `json:"probabilities,omitempty"`
-}
-
-// BuildCLIOutput projects a parsed response into CLI JSON for one named answer.
-func BuildCLIOutput(parsed ParsedResponse, primary string) (CLIOutput, bool) {
-	out := CLIOutput{
-		Model: parsed.Model,
-		Usage: parsed.Usage,
-	}
-	answer, ok := parsed.Answers[primary]
+	decode, ok := answerDecoders[head.Type]
 	if !ok {
-		return out, false
+		return nil, fmt.Errorf("unknown type %q", head.Type)
 	}
-	out.Type = answer.AnswerType()
-	switch a := answer.(type) {
-	case NoulAnswer:
-		out.Noul = a.Noul
-	case ChoiceAnswer:
-		out.Choice = a.Choice
-		out.Confidence = a.Confidence
-		out.Probabilities = a.Probabilities
-	case ScoreAnswer:
-		out.Score = a.Score
-		out.Confidence = a.Confidence
-	}
-	return out, true
+	return decode(raw)
 }

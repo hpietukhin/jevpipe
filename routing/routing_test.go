@@ -2,6 +2,9 @@ package routing
 
 import (
 	"encoding/json"
+	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/hpietukhin/jevpipe/typesafe"
@@ -27,6 +30,22 @@ func TestStdinState_invalidJSON_becomesString(t *testing.T) {
 	t.Parallel()
 	if got := StdinState([]byte(`not-json`)); got != "not-json" {
 		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestStdinState_textStartingWithJSON_staysString(t *testing.T) {
+	t.Parallel()
+	if got := StdinState([]byte(`3 apples`)); got != "3 apples" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestQuestion_openPromptOnScalarState_usesNoul(t *testing.T) {
+	t.Parallel()
+	for _, stdin := range []string{"I was charged twice", "42", `"quoted"`, ""} {
+		if q := Question(StdinState([]byte(stdin)), "what is this about?"); q.Type() != typesafe.TypeNoul {
+			t.Fatalf("stdin %q: got %v", stdin, q.Type())
+		}
 	}
 }
 
@@ -58,6 +77,33 @@ func TestQuestion_openPromptOnJSON_usesChoiceWithPaths(t *testing.T) {
 	}
 	if ch.Criteria["42"] != "project_id" {
 		t.Fatalf("criteria: %#v", ch.Criteria)
+	}
+}
+
+func TestQuestion_candidatesPastCap_areDeterministic(t *testing.T) {
+	t.Parallel()
+	state := map[string]any{}
+	for i := range 3 * maxCandidates {
+		state[fmt.Sprintf("k%03d", i)] = json.Number(fmt.Sprint(i))
+	}
+	first := Question(state, "which key?").(typesafe.Choice).Criteria
+	for range 20 {
+		got := Question(state, "which key?").(typesafe.Choice).Criteria
+		if !maps.Equal(got, first) {
+			t.Fatalf("criteria changed between runs")
+		}
+	}
+}
+
+func TestQuestion_noneValue_keepsSentinelSeparate(t *testing.T) {
+	t.Parallel()
+	q := Question(map[string]any{"status": "none"}, "what status?")
+	criteria := q.(typesafe.Choice).Criteria
+	if criteria["none"] != "status" {
+		t.Fatalf("data candidate: %#v", criteria)
+	}
+	if !slices.Contains(slices.Collect(maps.Values(criteria)), noneDescription) {
+		t.Fatalf("sentinel missing: %#v", criteria)
 	}
 }
 

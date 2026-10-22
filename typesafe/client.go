@@ -2,26 +2,29 @@ package typesafe
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 )
 
 const (
-	SystemOnePath  = "/v1/systemone"
+	DefaultBaseURL = "https://api.typesafe.ai"
+	systemOnePath  = "/v1/systemone"
 	maxErrorBody   = 200
 	defaultTimeout = 120 * time.Second
 )
 
 // Client calls the TypeSafe HTTP API.
 type Client struct {
-	BaseURL    string
+	BaseURL    string // DefaultBaseURL when empty
 	APIKey     string
 	HTTPClient *http.Client
 }
@@ -37,21 +40,21 @@ func (c *Client) httpClient() *http.Client {
 	return defaultHTTPClient()
 }
 
-// Response is the decoded System One payload.
+// Response is a System One reply with every answer decoded to its primitive type.
 type Response struct {
-	Model   string                     `json:"model"`
-	Usage   map[string]any             `json:"usage"`
-	Answers map[string]json.RawMessage `json:"answers"`
+	Model   string
+	Usage   map[string]any
+	Answers map[string]Answer
 }
 
-// SystemOne sends a typed request and returns the raw response wire.
-func (c *Client) SystemOne[State any](ctx context.Context, req Request[State]) (Response, error) {
+// SystemOne sends req to POST /v1/systemone and decodes the answers.
+func (c *Client) SystemOne(ctx context.Context, req Request) (Response, error) {
 	payload, err := jsonv2.Marshal(req)
 	if err != nil {
 		return Response{}, fmt.Errorf("marshal request: %w", err)
 	}
 
-	url := c.BaseURL + SystemOnePath
+	url := strings.TrimSuffix(cmp.Or(c.BaseURL, DefaultBaseURL), "/") + systemOnePath
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return Response{}, fmt.Errorf("build request: %w", err)
@@ -73,12 +76,27 @@ func (c *Client) SystemOne[State any](ctx context.Context, req Request[State]) (
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return Response{}, fmt.Errorf("api %s: %s", resp.Status, truncateBody(body))
 	}
+	return decodeResponse(body)
+}
 
-	var parsed Response
-	if err := jsonv2.Unmarshal(body, &parsed); err != nil {
+func decodeResponse(body []byte) (Response, error) {
+	var wire struct {
+		Model   string                    `json:"model"`
+		Usage   map[string]any            `json:"usage"`
+		Answers map[string]jsontext.Value `json:"answers"`
+	}
+	if err := jsonv2.Unmarshal(body, &wire); err != nil {
 		return Response{}, fmt.Errorf("decode response: %w", err)
 	}
-	return parsed, nil
+	answers := make(map[string]Answer, len(wire.Answers))
+	for name, raw := range wire.Answers {
+		answer, err := decodeAnswer(raw)
+		if err != nil {
+			return Response{}, fmt.Errorf("answer %q: %w", name, err)
+		}
+		answers[name] = answer
+	}
+	return Response{Model: wire.Model, Usage: wire.Usage, Answers: answers}, nil
 }
 
 func truncateBody(body []byte) string {
@@ -87,24 +105,4 @@ func truncateBody(body []byte) string {
 		return s
 	}
 	return s[:maxErrorBody] + "…"
-}
-
-// ParsedResponse pairs wire metadata with typed answers.
-type ParsedResponse struct {
-	Model   string
-	Usage   map[string]any
-	Answers map[string]Answer
-}
-
-// Parse decodes every answer in a Response using primitive-specific types.
-func (r Response) Parse() (ParsedResponse, error) {
-	answers, err := DecodeAnswers(r.Answers)
-	if err != nil {
-		return ParsedResponse{}, fmt.Errorf("parse answers: %w", err)
-	}
-	return ParsedResponse{
-		Model:   r.Model,
-		Usage:   r.Usage,
-		Answers: answers,
-	}, nil
 }

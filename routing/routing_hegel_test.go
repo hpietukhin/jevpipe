@@ -1,6 +1,7 @@
 package routing
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,7 +15,7 @@ func TestScalarCandidates_includesScalarLeaves(t *testing.T) {
 		key := hegel.Draw(ht, hegel.Text().Alphabet("abc").MinSize(1).MaxSize(8))
 		n := hegel.Draw(ht, hegel.Integers(-500, 500))
 		state := map[string]any{key: n}
-		want := scalarString(n)
+		want := fmt.Sprint(n)
 		found := false
 		for _, c := range scalarCandidates(state) {
 			if c.Value == want && c.Path == key {

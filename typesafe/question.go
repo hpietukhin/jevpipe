@@ -1,12 +1,5 @@
 package typesafe
 
-import (
-	"encoding/json"
-	"fmt"
-
-	jsonv2 "encoding/json/v2"
-)
-
 // QuestionType names a System One primitive.
 type QuestionType string
 
@@ -19,7 +12,7 @@ const (
 // Question is implemented only by Noul, Choice, and Score in this package.
 type Question interface {
 	Type() QuestionType
-	marshalWire() (json.RawMessage, error)
+	wire() any
 }
 
 // questionWire is the JSON shape TypeSafe expects for every question.
@@ -37,12 +30,8 @@ type Noul struct {
 
 func (Noul) Type() QuestionType { return TypeNoul }
 
-func (q Noul) marshalWire() (json.RawMessage, error) {
-	return jsonv2.Marshal(questionWire[map[string]string]{
-		Type:         TypeNoul,
-		Instructions: q.Instructions,
-		Criteria:     q.Criteria,
-	})
+func (q Noul) wire() any {
+	return questionWire[map[string]string]{TypeNoul, q.Instructions, q.Criteria}
 }
 
 // Choice picks one labeled option.
@@ -53,12 +42,8 @@ type Choice struct {
 
 func (Choice) Type() QuestionType { return TypeChoice }
 
-func (q Choice) marshalWire() (json.RawMessage, error) {
-	return jsonv2.Marshal(questionWire[map[string]string]{
-		Type:         TypeChoice,
-		Instructions: q.Instructions,
-		Criteria:     q.Criteria,
-	})
+func (q Choice) wire() any {
+	return questionWire[map[string]string]{TypeChoice, q.Instructions, q.Criteria}
 }
 
 // Score rates the state along ordered levels.
@@ -69,23 +54,6 @@ type Score struct {
 
 func (Score) Type() QuestionType { return TypeScore }
 
-func (q Score) marshalWire() (json.RawMessage, error) {
-	return jsonv2.Marshal(questionWire[[]string]{
-		Type:         TypeScore,
-		Instructions: q.Instructions,
-		Criteria:     q.Criteria,
-	})
-}
-
-// MarshalQuestions encodes a named set of questions for POST /v1/systemone.
-func MarshalQuestions(questions map[string]Question) (map[string]json.RawMessage, error) {
-	out := make(map[string]json.RawMessage, len(questions))
-	for name, q := range questions {
-		raw, err := q.marshalWire()
-		if err != nil {
-			return nil, fmt.Errorf("question %q: %w", name, err)
-		}
-		out[name] = raw
-	}
-	return out, nil
+func (q Score) wire() any {
+	return questionWire[[]string]{TypeScore, q.Instructions, q.Criteria}
 }
