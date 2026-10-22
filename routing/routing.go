@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/havriil/jevpipe/typesafe"
+	"github.com/hpietukhin/jevpipe/typesafe"
 )
 
 const maxCandidates = 200

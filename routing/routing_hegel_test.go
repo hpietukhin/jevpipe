@@ -6,7 +6,7 @@ import (
 
 	"hegel.dev/go/hegel"
 
-	"github.com/havriil/jevpipe/typesafe"
+	"github.com/hpietukhin/jevpipe/typesafe"
 )
 
 func TestScalarCandidates_includesScalarLeaves(t *testing.T) {

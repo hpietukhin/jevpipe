@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/havriil/jevpipe/typesafe"
+	"github.com/hpietukhin/jevpipe/typesafe"
 )
 
 func TestStdinState_largeIntegerStaysExact(t *testing.T) {

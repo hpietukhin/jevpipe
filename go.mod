@@ -1,4 +1,4 @@
-module github.com/havriil/jevpipe
+module github.com/hpietukhin/jevpipe
 
 go 1.27
 

@@ -14,8 +14,8 @@ import (
 
 	jsonv2 "encoding/json/v2"
 
-	"github.com/havriil/jevpipe/routing"
-	"github.com/havriil/jevpipe/typesafe"
+	"github.com/hpietukhin/jevpipe/routing"
+	"github.com/hpietukhin/jevpipe/typesafe"
 )
 
 const (
